@@ -1,0 +1,10 @@
+requests
+json
+flask
+boto3
+git+https://github.com/genghis/slacker.git
+slackclient
+re
+uuid
+datetime
+decimal
