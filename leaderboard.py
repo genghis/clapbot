@@ -7,6 +7,8 @@ from slacker import Slacker
 from slackclient import SlackClient
 import re
 
+# NOTE: I have to use both Slacker and SlackClient, because I can't use Slacker to pass blocks the way I want to in an ephemeralMessage. I'm just as unhappy about it as you are.
+
 SLACK_TOKEN = os.environ['SLACK_OAUTH']
 slack = Slacker(SLACK_TOKEN)
 sc = SlackClient(SLACK_TOKEN)
@@ -20,21 +22,26 @@ def lambda_handler():
 	channel_id = request.form.get('channel_id')
 	user_id = request.form.get('user_id')
 
+	# This asks dynamoDB for every entry in the DB. It is NOT performant but will not matter in an org as small as Revel
 	rows = table.scan(
 			ProjectionExpression="shoutee, claps",
 			)
 
+	# This next little bit just creates some dictionary entries for the stuff returned from the DB.
 	resultsdict = {}
-	for entry in rows['Items']:
+	for entry in rows['Items']: 
 		resultsdict[entry['shoutee']] = str(entry['claps'])
 
+	# Using foul sorcery, the following sorts the dictionary items by value -- specifically, it ranks the highest number of claps first)
 	sorteddict = {k: v for k, v in sorted(resultsdict.items(), key=lambda x: x[1], reverse=True)}
 
+	# This is me being a bad programmer. I have to take the dictionary above and turn it into a series of listed pairs in a different list in order to later pull the info I need out of it
 	leaderarray = []
 	for key, value in sorteddict.items():
 		dictobj = [key, value]
 		leaderarray.append(dictobj)
 
+	# Directly referencing the indexes within my newly created ordered list
 	firstPlaceName = leaderarray[0][0]
 	firstPlaceCount = leaderarray[0][1]
 	secondPlaceName = leaderarray[1][0]
@@ -46,17 +53,20 @@ def lambda_handler():
 	fifthPlaceName = leaderarray[4][0]
 	fifthPlaceCount = leaderarray[4][1]
 
-	re2='.*?'	# Non-greedy match on filler
-	re3='(@)'	# Any Single Character 1
-	re4='((?:[a-z][a-z]*[0-9]+[a-z0-9]*))'	# Alphanum 1
-
+	# This regular expression set just finds the userid in order to later pull icons, names, etc.
+	re2='.*?'	
+	re3='(@)'	
+	re4='((?:[a-z][a-z]*[0-9]+[a-z0-9]*))'	
 	rg2 = re.compile(re2+re3+re4,re.IGNORECASE|re.DOTALL)
+
+	# This uses the regular expression to actually tear apart the string inside of firstPlaceName, secondPlaceName, etc.
 	firsticon= rg2.findall(firstPlaceName)
 	secondicon= rg2.findall(secondPlaceName)
 	thirdicon= rg2.findall(thirdPlaceName)
 	fourthicon= rg2.findall(fourthPlaceName)
 	fifthicon= rg2.findall(fifthPlaceName)
 
+	# Storing the userid, which will be used as a key in a couple dictionaries later
 	first = firsticon[0]
 	second = secondicon[0]
 	third = thirdicon[0]
@@ -67,6 +77,7 @@ def lambda_handler():
 	icondict = {}
 	realnames = {}
 
+	# Take each userid and go get profile info -- an image url and a human readable name. Then put that info into some ordered lists.
 	for icon in iconlist:
 		iconresponse = slack.users.profile.get(icon)
 		iconblob = json.loads(f'{iconresponse}')
@@ -75,18 +86,21 @@ def lambda_handler():
 		realnames[icon] = iconname
 		icondict[icon] = iconurl
 
+	# This is some hackery to be able to use iteration instead of a lot of copy-paste manual stuff.
 	firstname = f'{realnames[first]}'
 	secondname = f'{realnames[second]}'
 	thirdname = f'{realnames[third]}'
 	fourthname = f'{realnames[fourth]}'
 	fifthname = f'{realnames[fifth]}'
 
+	# This is ALSO some hackery to be able to use iteration instead of a lot of copy-paste manual stuff.
 	firsturl = f'{icondict[first]}'
 	secondurl = f'{icondict[second]}'
 	thirdurl = f'{icondict[third]}'
 	fourthurl = f'{icondict[fourth]}'
 	fifthurl = f'{icondict[fifth]}'
 	
+	# leaderboard[] is the preliminary list that will become json that will become a Block passed to slack.
 	leaderboard = [
 		{"type": "section",
 			"text": {
@@ -156,8 +170,9 @@ def lambda_handler():
 		}
 		]
 
-	readableleaderboard = json.dumps(leaderboard)
+	readableleaderboard = json.dumps(leaderboard) # make that list into some json
 
+	# This is your actual info, pushed to the user who sent the /leaderboard request. "postEphemeral" is Slack's "only you can see this" option.
 	sc.api_call(
 		"chat.postEphemeral",
 		channel=channel_id,
